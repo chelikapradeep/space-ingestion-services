@@ -28,7 +28,6 @@ public class MinuteAggregationScheduler {
             InMemoryMinuteStore store,
             MinuteStatRepository repository,
             WebClient webClient) {
-
         this.store = store;
         this.repository = repository;
         this.webClient = webClient;
@@ -37,15 +36,23 @@ public class MinuteAggregationScheduler {
     @Scheduled(cron = "0 * * * * *")
     public void aggregate() {
 
+        // Aggregate previous completed minute
         Instant minute = Instant.now()
                 .minus(1, ChronoUnit.MINUTES)
                 .truncatedTo(ChronoUnit.MINUTES);
 
         Set<String> ids = store.getAndClearIds(minute);
+        Set<String> endpoints = store.getAndClearEndpoints(minute);
+
+       
         if (ids == null || ids.isEmpty()) return;
+
+       
+        if (endpoints == null || endpoints.isEmpty()) return;
 
         long uniqueCount = ids.size();
 
+       
         MinuteStat stat = new MinuteStat();
         stat.setMinuteStart(minute);
         stat.setUniqueIdCount(uniqueCount);
@@ -53,20 +60,22 @@ public class MinuteAggregationScheduler {
 
         System.out.println(minute + " -> " + uniqueCount + " unique ids");
 
+        
         Map<String, Object> payload = Map.of(
                 "minuteStart", minute.toString(),
                 "uniqueIdCount", uniqueCount
         );
 
+        
         webClient.post()
                 .uri(aggregationPostEndpoint)
                 .bodyValue(payload)
                 .retrieve()
-                .onStatus(
-                        s -> s.is4xxClientError() || s.is5xxServerError(),
-                        r -> Mono.empty()
-                )
                 .toBodilessEntity()
+                .doOnSuccess(res ->
+                        System.out.println("POST success to " + aggregationPostEndpoint))
+                .doOnError(err ->
+                        System.err.println("POST failed to " + aggregationPostEndpoint))
                 .onErrorResume(ex -> Mono.empty())
                 .subscribe();
     }
